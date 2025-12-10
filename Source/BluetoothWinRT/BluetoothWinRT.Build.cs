@@ -49,5 +49,7 @@ public class BluetoothWinRT : ModuleRules
 				// ... add any modules that your module loads dynamically here ...
 			}
 			);
+
+		// Note: This plugin uses WinRT APIs on Windows; you may need to enable C++/WinRT support in your build environment.
 	}
 }
