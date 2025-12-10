@@ -1,0 +1,54 @@
+# .gitignore for BluetoothWinRT Unreal Engine plugin
+
+# Binaries and build products
+Binaries/
+Build/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# Visual Studio / IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.userprefs
+*.VC.db
+*.opensdf
+*.sdf
+*.ipch/
+.idea/
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Compiled binaries
+*.dll
+*.exe
+*.lib
+*.app
+*.pdb
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+*.xcuserstate
+
+# Generated source files
+*.gen.cpp
+*.gen.h
+*.generated.*
+
+# Plugin-specific
+*.uplugin.binary
+
+# Ignore build artifacts from Unreal
+*.target
+
+# End of file
