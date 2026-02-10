@@ -2,27 +2,35 @@
 #include "CoreMinimal.h"
 
 #if PLATFORM_WINDOWS
-#include <windows.h>
+
+// Suppress warnings from C++/WinRT headers that conflict with UE build settings
+#pragma warning(push)
+#pragma warning(disable: 4668) // '_DEBUG' / '_M_ARM64EC' / '_M_IX86' not defined
+
+#include "Windows/AllowWindowsPlatformTypes.h"
+
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.Bluetooth.h>
 #include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
-using namespace winrt;
-using namespace Windows::Devices::Enumeration;
-using namespace Windows::Devices::Bluetooth;
-using namespace Windows::Devices::Bluetooth::GenericAttributeProfile;
-#endif
+
+#include "Windows/HideWindowsPlatformTypes.h"
+
+#pragma warning(pop)
+
+#endif // PLATFORM_WINDOWS
 
 void UBluetoothWinRTFunctionLibrary::StartConnectToDeviceByAddress(const FString& DeviceAddress)
 {
 #if PLATFORM_WINDOWS
-    init_apartment();
+    winrt::init_apartment();
 
     // Expect address in hex string format "0123456789AB" (no separators)
-    std::wstring addressW = std::wstring(*DeviceAddress);
+    std::wstring addressW(*DeviceAddress);
 
-    // Convert string to unsigned long long
-    unsigned long long bluetoothAddress = 0;
+    // Convert hex string to uint64
+    uint64_t bluetoothAddress = 0;
     for (wchar_t c : addressW)
     {
         bluetoothAddress <<= 4;
@@ -31,46 +39,50 @@ void UBluetoothWinRTFunctionLibrary::StartConnectToDeviceByAddress(const FString
         else if (c >= L'a' && c <= L'f') bluetoothAddress |= (10 + c - L'a');
     }
 
-    // Asynchronously connect to device
-    auto op = BluetoothLEDevice::FromBluetoothAddressAsync(bluetoothAddress);
-    op.Completed([=](auto const& asyncInfo, auto const& asyncStatus)
+    // Asynchronously connect to device (fully qualified to avoid collision with UE's Windows namespace)
+    auto op = winrt::Windows::Devices::Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(bluetoothAddress);
+    op.Completed([DeviceAddress](auto const& asyncInfo, winrt::Windows::Foundation::AsyncStatus asyncStatus)
     {
-        if (asyncStatus == Windows::Foundation::AsyncStatus::Completed)
+        if (asyncStatus == winrt::Windows::Foundation::AsyncStatus::Completed)
         {
-            BluetoothLEDevice device = asyncInfo.GetResults();
+            auto device = asyncInfo.GetResults();
             if (device)
             {
                 UE_LOG(LogTemp, Log, TEXT("Connected to device: %s"), *DeviceAddress);
 
-                // Find FTMS service (Fitness Machine Service) UUID: 00001826-0000-1000-8000-00805f9b34fb
-                auto servicesOp = device.GetGattServicesForUuidAsync({ 0x00001826, 0x0000, 0x1000, 0x8000, 0x00805f9b34fb });
-                servicesOp.Completed([=](auto const& svcAsync, auto const& svcStatus)
+                // FTMS service UUID: 00001826-0000-1000-8000-00805f9b34fb
+                winrt::guid ftmsGuid{ 0x00001826, 0x0000, 0x1000, { 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb } };
+                auto servicesOp = device.GetGattServicesForUuidAsync(ftmsGuid);
+                servicesOp.Completed([DeviceAddress](auto const& svcAsync, winrt::Windows::Foundation::AsyncStatus svcStatus)
                 {
-                    if (svcStatus == Windows::Foundation::AsyncStatus::Completed)
+                    if (svcStatus == winrt::Windows::Foundation::AsyncStatus::Completed)
                     {
                         auto result = svcAsync.GetResults();
                         if (result.Services().Size() > 0)
                         {
-                            GattDeviceService service = result.Services().GetAt(0);
-                            UE_LOG(LogTemp, Log, TEXT("Found FTMS service"));
-
-                            // Here you would find characteristics to read/write. This minimal example stops here.
+                            auto service = result.Services().GetAt(0);
+                            UE_LOG(LogTemp, Log, TEXT("Found FTMS service on device: %s"), *DeviceAddress);
+                            // Next step: enumerate characteristics
                         }
                         else
                         {
-                            UE_LOG(LogTemp, Warning, TEXT("FTMS service not found"));
+                            UE_LOG(LogTemp, Warning, TEXT("FTMS service not found on device: %s"), *DeviceAddress);
                         }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("GetGattServicesForUuidAsync failed for device: %s"), *DeviceAddress);
                     }
                 });
             }
             else
             {
-                UE_LOG(LogTemp, Warning, TEXT("Failed to get device from address"));
+                UE_LOG(LogTemp, Warning, TEXT("Failed to get BluetoothLEDevice from address: %s"), *DeviceAddress);
             }
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("Failed to connect to device async"));
+            UE_LOG(LogTemp, Warning, TEXT("FromBluetoothAddressAsync failed for: %s"), *DeviceAddress);
         }
     });
 #else
