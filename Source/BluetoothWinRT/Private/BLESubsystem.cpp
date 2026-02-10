@@ -107,21 +107,29 @@ void UBLESubsystem::StartScan(bool bInFilterDuplicates)
         // Marshal to game thread
         AsyncTask(ENamedThreads::GameThread, [this, addressStr, deviceName, rssi, serviceUUIDs]()
         {
-            // Check if we should filter this device
-            if (bFilterDuplicates && DiscoveredDevices.Contains(addressStr))
+            // Check if we already have this device
+            if (DiscoveredDevices.Contains(addressStr))
             {
-                // Update existing entry (name/RSSI might have changed)
                 FBLEDeviceInfo& existing = DiscoveredDevices[addressStr];
-                if (deviceName != TEXT("Unknown Device") && existing.DeviceName == TEXT("Unknown Device"))
+                bool bNameUpdated = (deviceName != TEXT("Unknown Device") && existing.DeviceName == TEXT("Unknown Device"));
+                
+                // Update existing entry
+                if (bNameUpdated)
                 {
                     existing.DeviceName = deviceName;
                 }
                 existing.RSSI = rssi;
-                // Don't broadcast again for duplicates
+                
+                // Broadcast if name was updated (so UI can refresh)
+                if (bNameUpdated)
+                {
+                    UE_LOG(LogTemp, Log, TEXT("BLE Device Name Updated: %s (%s)"), *deviceName, *addressStr);
+                    OnDeviceDiscovered.Broadcast(existing);
+                }
                 return;
             }
 
-            // Create device info struct
+            // Create device info struct for new device
             FBLEDeviceInfo DeviceInfo;
             DeviceInfo.DeviceAddress = addressStr;
             DeviceInfo.DeviceName = deviceName;
