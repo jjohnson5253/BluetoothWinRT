@@ -1,4 +1,4 @@
-Bluetooth Plugin for Unreal Engine 5.3
+Bluetooth Plugin for Unreal Engine 5.5
 
 Tested with LightBlue device on iOS
 - created virtual peripheral "cycling power"
