@@ -59,15 +59,28 @@ void UBLESubsystem::StartScan(bool bInFilterDuplicates)
 
     bFilterDuplicates = bInFilterDuplicates;
     
-    // Don't clear previous results - keep device names we've learned
-    // DiscoveredDevices map persists across scans to remember names
+    // Clear discovered devices at the start of each scan
+    // This ensures we only show currently active devices
+    DiscoveredDevices.Empty();
     
     // Create watcher data struct
     auto* WatcherData = new FBLEWatcherData();
     
-    // Create device selector for Bluetooth LE devices
-    auto selector = BluetoothLEDevice::GetDeviceSelector();
-    WatcherData->Watcher = DeviceInformation::CreateWatcher(selector);
+    // Use AQS selector for Bluetooth LE devices that are currently present/advertising
+    // This filters to only devices with System.Devices.Aep.IsPresent = true
+    auto selector = L"System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\" AND System.Devices.Aep.IsPresent:=System.StructuredQueryType.Boolean#True";
+    
+    // Request additional properties including signal strength
+    winrt::Windows::Foundation::Collections::IVector<winrt::hstring> requestedProperties = winrt::single_threaded_vector<winrt::hstring>();
+    requestedProperties.Append(L"System.Devices.Aep.SignalStrength");
+    requestedProperties.Append(L"System.Devices.Aep.IsPresent");
+    requestedProperties.Append(L"System.Devices.Aep.Bluetooth.Le.IsConnectable");
+    
+    WatcherData->Watcher = DeviceInformation::CreateWatcher(
+        selector,
+        requestedProperties,
+        DeviceInformationKind::AssociationEndpoint
+    );
     WatcherPtr = WatcherData;
 
     // Subscribe to Added event (new device discovered)
@@ -116,6 +129,12 @@ void UBLESubsystem::StartScan(bool bInFilterDuplicates)
             {
                 rssi = winrt::unbox_value<int32_t>(rssiObj);
             }
+        }
+
+        // Skip devices with no signal (RSSI -100 means cached but not present)
+        if (rssi <= -100)
+        {
+            return;
         }
 
         // Marshal to game thread
