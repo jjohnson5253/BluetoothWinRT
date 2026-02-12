@@ -66,21 +66,21 @@ void UBLESubsystem::StartScan(bool bInFilterDuplicates)
     // Create watcher data struct
     auto* WatcherData = new FBLEWatcherData();
     
-    // Use AQS selector for Bluetooth LE devices that are currently present/advertising
-    // This filters to only devices with System.Devices.Aep.IsPresent = true
-    auto selector = L"System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\" AND System.Devices.Aep.IsPresent:=System.StructuredQueryType.Boolean#True";
+    // Use AQS selector to find all Bluetooth LE devices (paired and unpaired)
+    // Protocol ID for Bluetooth LE: {bb7bb05e-5972-42b5-94fc-76eaa7084d49}
+    winrt::hstring selector = L"System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\"";
     
     // Request additional properties including signal strength
     winrt::Windows::Foundation::Collections::IVector<winrt::hstring> requestedProperties = winrt::single_threaded_vector<winrt::hstring>();
     requestedProperties.Append(L"System.Devices.Aep.SignalStrength");
-    requestedProperties.Append(L"System.Devices.Aep.IsPresent");
+    requestedProperties.Append(L"System.Devices.Aep.IsConnected");
     requestedProperties.Append(L"System.Devices.Aep.Bluetooth.Le.IsConnectable");
     
+    // Create watcher with AssociationEndpoint kind to discover all BLE devices
     WatcherData->Watcher = DeviceInformation::CreateWatcher(
-        selector,
-        requestedProperties,
-        DeviceInformationKind::AssociationEndpoint
-    );
+        selector, 
+        requestedProperties, 
+        DeviceInformationKind::AssociationEndpoint);
     WatcherPtr = WatcherData;
 
     // Subscribe to Added event (new device discovered)
@@ -90,26 +90,24 @@ void UBLESubsystem::StartScan(bool bInFilterDuplicates)
         auto deviceId = deviceInfo.Id();
         auto deviceName = deviceInfo.Name();
         
-        // Get BT address from ID (format: "BluetoothLE#BluetoothLE<address>-<service>")
+        // Get BT address from ID
+        // Format: "BluetoothLE#BluetoothLE<local_adapter_address>-<remote_device_address>"
+        // We want the REMOTE device address (after the dash)
         std::wstring idStr = deviceId.c_str();
-        size_t pos = idStr.find(L"BluetoothLE");
         FString addressStr;
         
-        if (pos != std::wstring::npos)
+        // Find the dash that separates local adapter from remote device
+        size_t dashPos = idStr.rfind(L"-");
+        if (dashPos != std::wstring::npos && dashPos + 1 < idStr.length())
         {
-            // Extract the hex address portion
-            size_t addrStart = pos + 11; // Skip "BluetoothLE"
-            size_t addrEnd = idStr.find(L"-", addrStart);
-            if (addrEnd != std::wstring::npos)
-            {
-                std::wstring addrPart = idStr.substr(addrStart, addrEnd - addrStart);
-                addressStr = FString(addrPart.c_str());
-            }
+            // Extract the remote device address (everything after the last dash)
+            std::wstring remoteAddr = idStr.substr(dashPos + 1);
+            addressStr = FString(remoteAddr.c_str());
         }
         
         if (addressStr.IsEmpty())
         {
-            // Fallback: use device ID
+            // Fallback: use full device ID
             addressStr = FString(deviceId.c_str());
         }
         
@@ -180,20 +178,15 @@ void UBLESubsystem::StartScan(bool bInFilterDuplicates)
     {
         auto deviceId = updateInfo.Id();
         
-        // Extract address from ID
+        // Extract remote device address from ID (after the last dash)
         std::wstring idStr = deviceId.c_str();
-        size_t pos = idStr.find(L"BluetoothLE");
         FString addressStr;
         
-        if (pos != std::wstring::npos)
+        size_t dashPos = idStr.rfind(L"-");
+        if (dashPos != std::wstring::npos && dashPos + 1 < idStr.length())
         {
-            size_t addrStart = pos + 11;
-            size_t addrEnd = idStr.find(L"-", addrStart);
-            if (addrEnd != std::wstring::npos)
-            {
-                std::wstring addrPart = idStr.substr(addrStart, addrEnd - addrStart);
-                addressStr = FString(addrPart.c_str());
-            }
+            std::wstring remoteAddr = idStr.substr(dashPos + 1);
+            addressStr = FString(remoteAddr.c_str());
         }
         
         if (addressStr.IsEmpty())
@@ -213,16 +206,67 @@ void UBLESubsystem::StartScan(bool bInFilterDuplicates)
             }
         }
 
-        // Marshal to game thread
-        Async(EAsyncExecution::TaskGraphMainThread, [this, addressStr, rssi]()
+        // To get the updated name, we need to query the device info asynchronously
+        FString capturedAddress = addressStr;
+        int32 capturedRssi = rssi;
+        
+        try
         {
-            if (DiscoveredDevices.Contains(addressStr))
+            // Get updated device info to retrieve the name (must match watcher's DeviceInformationKind)
+            winrt::Windows::Foundation::Collections::IVector<winrt::hstring> props = winrt::single_threaded_vector<winrt::hstring>();
+            props.Append(L"System.Devices.Aep.SignalStrength");
+            auto asyncOp = DeviceInformation::CreateFromIdAsync(deviceId, props, DeviceInformationKind::AssociationEndpoint);
+            asyncOp.Completed([this, capturedAddress, capturedRssi](auto&& asyncInfo, auto&& asyncStatus)
             {
-                FBLEDeviceInfo& existing = DiscoveredDevices[addressStr];
-                existing.RSSI = rssi;
-                // Silently update RSSI without broadcasting (too frequent)
-            }
-        });
+                if (asyncStatus != winrt::Windows::Foundation::AsyncStatus::Completed)
+                {
+                    return;
+                }
+                
+                auto deviceInfo = asyncInfo.GetResults();
+                if (!deviceInfo)
+                {
+                    return;
+                }
+                
+                auto deviceName = deviceInfo.Name();
+                FString name = FString(deviceName.c_str());
+                
+                // Marshal to game thread
+                Async(EAsyncExecution::TaskGraphMainThread, [this, capturedAddress, name, capturedRssi]()
+                {
+                    if (DiscoveredDevices.Contains(capturedAddress))
+                    {
+                        FBLEDeviceInfo& existing = DiscoveredDevices[capturedAddress];
+                        
+                        // Update name if we got a real name and current is Unknown
+                        if (!name.IsEmpty() && name != TEXT("Unknown Device") && existing.DeviceName == TEXT("Unknown Device"))
+                        {
+                            existing.DeviceName = name;
+                            UE_LOG(LogTemp, Log, TEXT("BLE Device Name Updated: %s (%s)"), *name, *capturedAddress);
+                            OnDeviceDiscovered.Broadcast(existing);
+                        }
+                        
+                        // Always update RSSI
+                        if (capturedRssi > -100)
+                        {
+                            existing.RSSI = capturedRssi;
+                        }
+                    }
+                });
+            });
+        }
+        catch (...)
+        {
+            // If async query fails, just update RSSI
+            Async(EAsyncExecution::TaskGraphMainThread, [this, capturedAddress, capturedRssi]()
+            {
+                if (DiscoveredDevices.Contains(capturedAddress) && capturedRssi > -100)
+                {
+                    DiscoveredDevices[capturedAddress].RSSI = capturedRssi;
+                }
+            });
+        }
     });
 
     // Subscribe to Stopped event
