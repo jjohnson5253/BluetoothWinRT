@@ -53,6 +53,13 @@ public:
     TArray<FBLEDeviceInfo> GetDiscoveredDevices() const;
 
     /**
+     * Get discovered devices as UObjects (for ListView data binding).
+     * Returns UBLEDeviceObject items that can be used with ListView's Set List Items.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Bluetooth|WinRT")
+    TArray<UBLEDeviceObject*> GetDiscoveredDevicesAsObjects();
+
+    /**
      * Clear the list of discovered devices.
      */
     UFUNCTION(BlueprintCallable, Category = "Bluetooth|WinRT")

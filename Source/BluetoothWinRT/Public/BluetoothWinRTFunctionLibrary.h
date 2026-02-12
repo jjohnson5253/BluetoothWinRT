@@ -23,6 +23,25 @@ struct BLUETOOTHWINRT_API FBLEDeviceInfo
     TArray<FString> ServiceUUIDs;  // Advertised service UUIDs
 };
 
+// UObject wrapper for FBLEDeviceInfo (needed for ListView data binding)
+UCLASS(BlueprintType)
+class BLUETOOTHWINRT_API UBLEDeviceObject : public UObject
+{
+    GENERATED_BODY()
+
+public:
+    UPROPERTY(BlueprintReadOnly, Category = "Bluetooth")
+    FBLEDeviceInfo DeviceInfo;
+
+    // Helper function to create and initialize a device object
+    static UBLEDeviceObject* Create(const FBLEDeviceInfo& Info, UObject* Outer)
+    {
+        UBLEDeviceObject* Obj = NewObject<UBLEDeviceObject>(Outer);
+        Obj->DeviceInfo = Info;
+        return Obj;
+    }
+};
+
 UCLASS()
 class BLUETOOTHWINRT_API UBluetoothWinRTFunctionLibrary : public UBlueprintFunctionLibrary
 {

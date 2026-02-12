@@ -210,6 +210,21 @@ TArray<FBLEDeviceInfo> UBLESubsystem::GetDiscoveredDevices() const
     return Result;
 }
 
+TArray<UBLEDeviceObject*> UBLESubsystem::GetDiscoveredDevicesAsObjects()
+{
+    TArray<UBLEDeviceObject*> Result;
+    for (const auto& Pair : DiscoveredDevices)
+    {
+        Result.Add(UBLEDeviceObject::Create(Pair.Value, this));
+    }
+    // Sort by RSSI (strongest signal first)
+    Result.Sort([](const UBLEDeviceObject& A, const UBLEDeviceObject& B)
+    {
+        return A.DeviceInfo.RSSI > B.DeviceInfo.RSSI;
+    });
+    return Result;
+}
+
 void UBLESubsystem::ClearDiscoveredDevices()
 {
     DiscoveredDevices.Empty();
