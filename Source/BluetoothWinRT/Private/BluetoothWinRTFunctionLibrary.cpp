@@ -78,25 +78,50 @@ void UBluetoothWinRTFunctionLibrary::StartConnectToDeviceByAddress(const FString
                 {
                     UE_LOG(LogTemp, Log, TEXT("Connected to device: %s"), *CapturedAddress);
 
-                    // Find FTMS service (Fitness Machine Service) UUID: 00001826-0000-1000-8000-00805f9b34fb
-                    winrt::guid ftmsServiceUuid{ 0x00001826, 0x0000, 0x1000, { 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb } };
-                    auto servicesOp = device.GetGattServicesForUuidAsync(ftmsServiceUuid);
+                    // Get ALL GATT services on the device
+                    auto servicesOp = device.GetGattServicesAsync();
                     servicesOp.Completed([CapturedAddress](auto const& svcAsync, auto const& svcStatus)
                     {
                         if (svcStatus == winrt::Windows::Foundation::AsyncStatus::Completed)
                         {
                             auto result = svcAsync.GetResults();
-                            if (result.Services().Size() > 0)
+                            auto services = result.Services();
+                            
+                            UE_LOG(LogTemp, Log, TEXT("Found %d GATT services on device %s:"), services.Size(), *CapturedAddress);
+                            
+                            for (uint32_t i = 0; i < services.Size(); i++)
                             {
-                                GattDeviceService service = result.Services().GetAt(0);
-                                UE_LOG(LogTemp, Log, TEXT("Found FTMS service"));
-
-                                // Here you would find characteristics to read/write. This minimal example stops here.
+                                GattDeviceService service = services.GetAt(i);
+                                winrt::guid uuid = service.Uuid();
+                                
+                                // Format UUID as string
+                                FString uuidStr = FString::Printf(TEXT("%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X"),
+                                    uuid.Data1, uuid.Data2, uuid.Data3,
+                                    uuid.Data4[0], uuid.Data4[1], uuid.Data4[2], uuid.Data4[3],
+                                    uuid.Data4[4], uuid.Data4[5], uuid.Data4[6], uuid.Data4[7]);
+                                
+                                // Identify common BLE service UUIDs
+                                FString serviceName = TEXT("Unknown");
+                                if (uuid.Data1 == 0x1800) serviceName = TEXT("Generic Access");
+                                else if (uuid.Data1 == 0x1801) serviceName = TEXT("Generic Attribute");
+                                else if (uuid.Data1 == 0x180A) serviceName = TEXT("Device Information");
+                                else if (uuid.Data1 == 0x180D) serviceName = TEXT("Heart Rate");
+                                else if (uuid.Data1 == 0x180F) serviceName = TEXT("Battery Service");
+                                else if (uuid.Data1 == 0x1816) serviceName = TEXT("Cycling Speed and Cadence");
+                                else if (uuid.Data1 == 0x1818) serviceName = TEXT("Cycling Power");
+                                else if (uuid.Data1 == 0x1826) serviceName = TEXT("Fitness Machine (FTMS)");
+                                
+                                UE_LOG(LogTemp, Log, TEXT("  [%d] %s - %s"), i, *uuidStr, *serviceName);
                             }
-                            else
+                            
+                            if (services.Size() == 0)
                             {
-                                UE_LOG(LogTemp, Warning, TEXT("FTMS service not found"));
+                                UE_LOG(LogTemp, Warning, TEXT("No GATT services found on device"));
                             }
+                        }
+                        else
+                        {
+                            UE_LOG(LogTemp, Warning, TEXT("Failed to get GATT services"));
                         }
                     });
                 }
