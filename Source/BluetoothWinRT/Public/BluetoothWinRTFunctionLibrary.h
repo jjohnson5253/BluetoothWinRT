@@ -42,6 +42,9 @@ public:
     }
 };
 
+// Forward declaration for internal connection data
+struct FBLEConnectionData;
+
 UCLASS()
 class BLUETOOTHWINRT_API UBluetoothWinRTFunctionLibrary : public UBlueprintFunctionLibrary
 {
@@ -51,4 +54,16 @@ public:
     // Connect to a device by Bluetooth address (hex string, no separators). Windows only.
     UFUNCTION(BlueprintCallable, Category = "Bluetooth|WinRT")
     static void StartConnectToDeviceByAddress(const FString& DeviceAddress);
+
+    // Disconnect from a device by address
+    UFUNCTION(BlueprintCallable, Category = "Bluetooth|WinRT")
+    static void DisconnectFromDevice(const FString& DeviceAddress);
+
+    // Disconnect from all connected devices
+    UFUNCTION(BlueprintCallable, Category = "Bluetooth|WinRT")
+    static void DisconnectAll();
+
+private:
+    // Map to store active connections (prevents objects from being destroyed)
+    static TMap<FString, TSharedPtr<FBLEConnectionData>> ActiveConnections;
 };
