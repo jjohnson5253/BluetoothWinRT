@@ -13,6 +13,7 @@
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.Bluetooth.h>
 #include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
+#include <winrt/Windows.Storage.Streams.h>
 
 #include "Windows/HideWindowsPlatformTypes.h"
 
@@ -22,6 +23,59 @@ using namespace winrt;
 using namespace winrt::Windows::Devices::Enumeration;
 using namespace winrt::Windows::Devices::Bluetooth;
 using namespace winrt::Windows::Devices::Bluetooth::GenericAttributeProfile;
+using namespace winrt::Windows::Storage::Streams;
+
+// Helper to format characteristic UUID
+static FString FormatCharacteristicName(winrt::guid uuid)
+{
+    // Common characteristic UUIDs
+    if (uuid.Data1 == 0x2A37) return TEXT("Heart Rate Measurement");
+    if (uuid.Data1 == 0x2A38) return TEXT("Body Sensor Location");
+    if (uuid.Data1 == 0x2A39) return TEXT("Heart Rate Control Point");
+    if (uuid.Data1 == 0x2A5B) return TEXT("CSC Measurement");
+    if (uuid.Data1 == 0x2A5C) return TEXT("CSC Feature");
+    if (uuid.Data1 == 0x2A63) return TEXT("Cycling Power Measurement");
+    if (uuid.Data1 == 0x2A65) return TEXT("Cycling Power Feature");
+    if (uuid.Data1 == 0x2A66) return TEXT("Cycling Power Control Point");
+    if (uuid.Data1 == 0x2ACC) return TEXT("Fitness Machine Feature");
+    if (uuid.Data1 == 0x2ACD) return TEXT("Treadmill Data");
+    if (uuid.Data1 == 0x2ACE) return TEXT("Cross Trainer Data");
+    if (uuid.Data1 == 0x2AD1) return TEXT("Rower Data");
+    if (uuid.Data1 == 0x2AD2) return TEXT("Indoor Bike Data");
+    if (uuid.Data1 == 0x2AD3) return TEXT("Training Status");
+    if (uuid.Data1 == 0x2AD6) return TEXT("Supported Resistance Level Range");
+    if (uuid.Data1 == 0x2AD7) return TEXT("Supported Power Range");
+    if (uuid.Data1 == 0x2AD8) return TEXT("Fitness Machine Status");
+    if (uuid.Data1 == 0x2AD9) return TEXT("Fitness Machine Control Point");
+    if (uuid.Data1 == 0x2A19) return TEXT("Battery Level");
+    if (uuid.Data1 == 0x2A29) return TEXT("Manufacturer Name");
+    if (uuid.Data1 == 0x2A24) return TEXT("Model Number");
+    if (uuid.Data1 == 0x2A25) return TEXT("Serial Number");
+    if (uuid.Data1 == 0x2A26) return TEXT("Firmware Revision");
+    if (uuid.Data1 == 0x2A27) return TEXT("Hardware Revision");
+    if (uuid.Data1 == 0x2A28) return TEXT("Software Revision");
+    
+    return FString::Printf(TEXT("%08X"), uuid.Data1);
+}
+
+// Helper to convert IBuffer to hex string for logging
+static FString BufferToHexString(IBuffer const& buffer)
+{
+    if (!buffer || buffer.Length() == 0)
+    {
+        return TEXT("(empty)");
+    }
+    
+    DataReader reader = DataReader::FromBuffer(buffer);
+    FString result;
+    for (uint32_t i = 0; i < buffer.Length(); i++)
+    {
+        uint8_t byte = reader.ReadByte();
+        result += FString::Printf(TEXT("%02X "), byte);
+    }
+    return result;
+}
+
 #endif
 
 void UBluetoothWinRTFunctionLibrary::StartConnectToDeviceByAddress(const FString& DeviceAddress)
@@ -80,7 +134,7 @@ void UBluetoothWinRTFunctionLibrary::StartConnectToDeviceByAddress(const FString
 
                     // Get ALL GATT services on the device
                     auto servicesOp = device.GetGattServicesAsync();
-                    servicesOp.Completed([CapturedAddress](auto const& svcAsync, auto const& svcStatus)
+                    servicesOp.Completed([CapturedAddress, device](auto const& svcAsync, auto const& svcStatus)
                     {
                         if (svcStatus == winrt::Windows::Foundation::AsyncStatus::Completed)
                         {
@@ -112,6 +166,73 @@ void UBluetoothWinRTFunctionLibrary::StartConnectToDeviceByAddress(const FString
                                 else if (uuid.Data1 == 0x1826) serviceName = TEXT("Fitness Machine (FTMS)");
                                 
                                 UE_LOG(LogTemp, Log, TEXT("  [%d] %s - %s"), i, *uuidStr, *serviceName);
+                                
+                                // Get characteristics for this service and subscribe to notifications
+                                FString capturedServiceName = serviceName;
+                                auto charOp = service.GetCharacteristicsAsync();
+                                charOp.Completed([CapturedAddress, capturedServiceName](auto const& charAsync, auto const& charStatus)
+                                {
+                                    if (charStatus != winrt::Windows::Foundation::AsyncStatus::Completed)
+                                    {
+                                        return;
+                                    }
+                                    
+                                    auto charResult = charAsync.GetResults();
+                                    auto characteristics = charResult.Characteristics();
+                                    
+                                    for (uint32_t j = 0; j < characteristics.Size(); j++)
+                                    {
+                                        GattCharacteristic characteristic = characteristics.GetAt(j);
+                                        winrt::guid charUuid = characteristic.Uuid();
+                                        GattCharacteristicProperties props = characteristic.CharacteristicProperties();
+                                        
+                                        FString charName = FormatCharacteristicName(charUuid);
+                                        
+                                        // Check if this characteristic supports notifications or indications
+                                        bool supportsNotify = (static_cast<uint32_t>(props) & static_cast<uint32_t>(GattCharacteristicProperties::Notify)) != 0;
+                                        bool supportsIndicate = (static_cast<uint32_t>(props) & static_cast<uint32_t>(GattCharacteristicProperties::Indicate)) != 0;
+                                        
+                                        if (supportsNotify || supportsIndicate)
+                                        {
+                                            UE_LOG(LogTemp, Log, TEXT("    Subscribing to characteristic: %s (%s)"), 
+                                                *charName, supportsNotify ? TEXT("Notify") : TEXT("Indicate"));
+                                            
+                                            // Subscribe to value changed event
+                                            FString capturedCharName = charName;
+                                            characteristic.ValueChanged([CapturedAddress, capturedCharName](GattCharacteristic const& sender, GattValueChangedEventArgs const& args)
+                                            {
+                                                IBuffer value = args.CharacteristicValue();
+                                                FString hexData = BufferToHexString(value);
+                                                
+                                                UE_LOG(LogTemp, Log, TEXT("[%s] %s: %s"), 
+                                                    *CapturedAddress, *capturedCharName, *hexData);
+                                            });
+                                            
+                                            // Enable notifications/indications
+                                            GattClientCharacteristicConfigurationDescriptorValue cccdValue = 
+                                                supportsNotify ? GattClientCharacteristicConfigurationDescriptorValue::Notify 
+                                                              : GattClientCharacteristicConfigurationDescriptorValue::Indicate;
+                                            
+                                            auto writeOp = characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(cccdValue);
+                                            writeOp.Completed([capturedCharName](auto const& writeAsync, auto const& writeStatus)
+                                            {
+                                                if (writeStatus == winrt::Windows::Foundation::AsyncStatus::Completed)
+                                                {
+                                                    auto writeResult = writeAsync.GetResults();
+                                                    if (writeResult == GattCommunicationStatus::Success)
+                                                    {
+                                                        UE_LOG(LogTemp, Log, TEXT("    Successfully subscribed to %s"), *capturedCharName);
+                                                    }
+                                                    else
+                                                    {
+                                                        UE_LOG(LogTemp, Warning, TEXT("    Failed to subscribe to %s (status: %d)"), 
+                                                            *capturedCharName, static_cast<int>(writeResult));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
                             }
                             
                             if (services.Size() == 0)
